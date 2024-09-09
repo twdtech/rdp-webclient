@@ -20,12 +20,20 @@ function TryExecute {
     }
 }
 
+function GenerateSecurePassword {
+    param (
+        [int]$Length = 16
+    )
+
+    $chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+"
+    -join ((1..$Length) | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
+}
+
 $banner = @'
 ==============================================================
 Microsoft RDP Client Deployment Script for Windows Server 2022
 
-                            Version 1.0
-                         Author: TheWinDev
+                          Version 1.0
 ==============================================================
 '@
 Write-Host $banner
@@ -57,29 +65,26 @@ TryExecute -ScriptBlock {
 # Install Remote Desktop Web Client (HTML5 client)
 Write-Host "Installing Remote Desktop Web Client..."
 TryExecute -ScriptBlock {
-    $outputFilePath = "C:\WebClient.zip"
-    [IO.File]::WriteAllBytes($outputFilePath, [Convert]::FromBase64String($webClientPackage))
-
+    $repuUrl = "https://api.github.com/repos/twdtech/rdp-webclient/releases/latest"
+    $webClientZip = "RDWebClient.zip"
     $webClientPath = "C:\WebClient"
 
-    # Download the file
-    Invoke-WebRequest -Uri $webClientUrl -OutFile $webClientZip
+    $releaseInfo = Invoke-RequestMethod -Uri $repuUrl -headers @{ "User-Agent" = "PowerShell" }
+    $webClientUrl = $releaseInfo.assets » Where-Object { $_.name -match "\.zip$" } | Select-Object -ExpandProperty browser_download_url
 
-    # Verify the file is a valid ZIP
+    Invoke-WebRequest -uri $webClientUrl -OutFile $webClientZip
+
     if (-not (Test-Path $webClientZip)) {
-        throw "Download failed. File not found."
+        throw "Download failed. File coudldn't be downloaded!"
     }
 
-    # Try to expand the archive
     try {
-        Expand-Archive -Path $webClientZip -DestinationPath $webClientPath -Force
-    }
-    catch {
-        throw "Failed to expand the archive. The file may be corrupted."
+        Expant-Archive -Path $webClientZip -DestinationPath $webClientPath -Force
+    } catch {
+        throw "Failed to expand archive. File my be corrupted!"
     }
 
-    # Install the RD Web Client package
-    Install-RDWebClientPackage -Path $webClientPath
+    Install-RDWebClientPackage -path $webClientPath
 }
 
 # Deploy the RD Web Client
@@ -90,7 +95,12 @@ TryExecute -ScriptBlock {
 
 # Configure the Remote Desktop Gateway with certificate at C:\RDPWEB
 $GatewayCertPath = "C:\RDPWEB\certificate.pfx"  # Specify your certificate path
-$CertPassword = ConvertTo-SecureString "h6sv&RG56vbda78sh6d7js" -AsPlainText -Force
+$CertPassword = GenerateSecurePassword | ConvertTo-SecureString -AsPlainText -Force
+
+# Save the password to a TXT file
+$CertPasswordPlainText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($CertPassword))
+$PasswordFilePath = "C:\RDPWEB\certificate_password.txt"
+Set-Content -Path $PasswordFilePath -Value $CertPasswordPlainText
 
 Write-Host "Configuring Remote Desktop Gateway..."
 TryExecute -ScriptBlock {
@@ -130,3 +140,4 @@ TryExecute -ScriptBlock {
 }
 
 Write-Host "Remote Desktop Web Client has been successfully deployed."
+Write-Host "The certificate password has been saved to $PasswordFilePath."
